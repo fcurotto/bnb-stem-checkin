@@ -1,1 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BnB STEM Check-In System</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://apis.google.com/js/api.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
 
+    const CONFIG = {
+      CLIENT_ID: "796524259777-cnihn6v119nss563jn99jo21r1k7ushs.apps.googleusercontent.com",
+      API_KEY: "YOUR_API_KEY_HERE",
+      SPREADSHEET_ID: "1G63oBlBvyfijHZZXcibiDzE3fsJYZz145r5Db-brX4E",
+      SCOPES: "https://www.googleapis.com/auth/spreadsheets"
+    };
+
+    function BnBCheckInSystem() {
+      const [view, setView] = useState('scan');
+      const [qrInput, setQrInput] = useState('');
+      const [currentStudent, setCurrentStudent] = useState(null);
+      const [isDrawing, setIsDrawing] = useState(false);
+      const [students, setStudents] = useState([]);
+      const [employees, setEmployees] = useState([]);
+      const [checkIns, setCheckIns] = useState([]);
+      const [isOnline, setIsOnline] = useState(navigator.onLine);
+      const [demoQRCode, setDemoQRCode] = useState(null);
+      const [firstName, setFirstName] = useState('');
+      const [demoData, setDemoData] = useState({ studentName: '', parentName: '', employeeName: '' });
+      const [adminTab, setAdminTab] = useState('students');
+      const [newStudent, setNewStudent] = useState({
+        firstName: '', lastName: '', birthdate: '', parentFirstName: '', parentLastName: '',
+        parentPhone: '', parentEmail: '', emergencyContactName: '', emergencyContactPhone: '',
+        emergencyContactRelation: '', medicalNotes: ''
+      });
+      const [newEmployee, setNewEmployee] = useState({ name: '', email: '' });
+      const [isGoogleReady, setIsGoogleReady] = useState(false);
+      const [isSignedIn, setIsSignedIn] = useState(false);
+      const [editingStudent, setEditingStudent] = useState(null);
+      
+      const canvasRef = useRef(null);
+      const qrInputRef = useRef(null);
+      useEffect(() => {
+        const initClient = () => {
+          window.gapi.load('client:auth2', () => {
+            window.gapi.client.init({
+              apiKey: CONFIG.API_KEY,
+              clientId: CONFIG.CLIENT_ID,
+              discoveryDocs: ["https://sheets.googleapis.com/$discovery/rest?version=v4"],
+              scope: CONFIG.SCOPES
+            }).then(() => {
+              setIsGoogleReady(true);
+              const authInstance = window.gapi.auth2.getAuthInstance();
+              setIsSignedIn(authInstance.isSignedIn.get());
+              authInstance.isSignedIn.listen(setIsSignedIn);
+              if (authInstance.isSignedIn.get()) {
+                loadDataFromSheets();
+              }
+            });
+          });
+        };
+        if (window.gapi) {
+          initClient();
+        }
+      }, []);
+
+      const handleSignIn = () => {
+        window.gapi.auth2.getAuthInstance().signIn();
+      };
+
+      const handleSignOut = () => {
+        window.gapi.auth2.getAuthInstance().signOut();
+      };
+
+      const loadDataFromSheets = async () => {
+        try {
+          const response = await window.gapi.client.sheets.spreadsheets.values.batchGet({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            ranges: ['Students!A:Z', 'Employees!A:Z']
+          });
+          const studentData = response.result.valueRanges[0].values || [];
+          const employeeData = response.result.valueRanges[1].values || [];
+          if (studentData.length > 1) {
+            const loadedStudents = studentData.slice(1).map((row, idx) => ({
+              id: row[0] || 'student-' + idx,
+              firstName: row[1] || '',
+              lastName: row[2] || '',
+              birthdate: row[3] || '',
+              age: row[4] || '',
+              parentFirstName: row[5] || '',
+              parentLastName: row[6] || '',
+              parentPhone: row[7] || '',
+              parentEmail: row[8] || '',
+              qrCode: row[9] || '',
+              flagged: row[10] === 'TRUE',
+              locked: row[11] === 'TRUE',
+              message: row[12] || null,
+              lastContactVerification: row[13] || null,
+              emergencyContactName: row[14] || '',
+              emergencyContactPhone: row[15] || '',
+              emergencyContactRelation: row[16] || '',
+              medicalNotes: row[17] || ''
+            }));
+            setStudents(loadedStudents);
+          }
+          if (employeeData.length > 1) {
+            const loadedEmployees = employeeData.slice(1).map((row, idx) => ({
+              id: row[0] || 'employee-' + idx,
+              name: row[1] || '',
+              email: row[2] || '',
+              qrCode: row[3] || ''
+            }));
+            setEmployees(loadedEmployees);
+          }
+        } catch (error) {
+          console.error('Error loading data:', error);
+        }
+      };
+
+      const writeToSheet = async (sheetName, data) => {
+        if (!isSignedIn) return;
+        try {
+          await ensureSheetExists(sheetName);
+          await window.gapi.client.sheets.spreadsheets.values.append({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: sheetName + '!A:Z',
+            valueInputOption: 'RAW',
+            resource: { values: [data] }
+          });
+        } catch (error) {
+          console.error('Error writing to sheet:', error);
+        }
+      };
+
+      const ensureSheetExists = async (sheetName) => {
+        try {
+          const response = await window.gapi.client.sheets.spreadsheets.get({
+            spreadsheetId: CONFIG.SPREADSHEET_ID
+          });
+          const sheetExists = response.result.sheets.some(
+            sheet => sheet.properties.title === sheetName
+          );
+          if (!sheetExists) {
+            await window.gapi.client.sheets.spreadsheets.batchUpdate({
+              spreadsheetId: CONFIG.SPREADSHEET_ID,
+              resource: {
+                requests: [{ addSheet: { properties: { title: sheetName } } }]
+              }
+            });
+            let headers = [];
+            if (sheetName.includes('Students_')) {
+              headers = ['Date', 'Time In', 'Time Out', 'Student Name', 'Parent Name', 'Parent Phone', 'Parent Email', 'Parent Signature In', 'Parent Signature Out'];
+            } else if (sheetName.includes('Employees_')) {
+              headers = ['Date', 'Time In', 'Time Out', 'Employee Name'];
+            } else if (sheetName.includes('Demos_')) {
+              headers = ['Date', 'Time', 'Student Name', 'Parent Name', 'Employee'];
+            } else if (sheetName === 'Students') {
+              headers = ['ID', 'First Name', 'Last Name', 'Birthdate', 'Age', 'Parent First', 'Parent Last', 'Parent Phone', 'Parent Email', 'QR Code', 'Flagged', 'Locked', 'Message', 'Last Verification', 'Emergency Name', 'Emergency Phone', 'Emergency Relation', 'Medical Notes'];
+            } else if (sheetName === 'Employees') {
+              headers = ['ID', 'Name', 'Email', 'QR Code'];
+            }
+            await window.gapi.client.sheets.spreadsheets.values.append({
+              spreadsheetId: CONFIG.SPREADSHEET_ID,
+              range: sheetName + '!A1',
+              valueInputOption: 'RAW',
+              resource: { values: [headers] }
+            });
+          }
+        } catch (error) {
+          console.error('Error ensuring sheet exists:', error);
+        }
+      };
+
+      const formatDate = (date) => {
+        const d = date || new Date();
+        const day = String(d.getDate()).padStart(2, '0');
+        const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+        const month = months[d.getMonth()];
+        const year = d.getFullYear();
+        return day + month + year;
+      };
+
+      const formatTime = (date) => {
+        const d = date || new Date();
+        let hours = d.getHours();
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+        const period = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12 || 12;
+        return String(hours).padStart(2, '0') + ':' + minutes + ' ' + period;
+      };
+
+      const getMonthYear = (date) => {
+        const d = date || new Date();
+        const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+        return months[d.getMonth()] + d.getFullYear();
+      };
+
+      const calculateAge = (birthdate) => {
+        const today = new Date();
+        const birth = new Date(birthdate);
+        let age = today.getFullYear() - birth.getFullYear();
+        const monthDiff = today.getMonth() - birth.getMonth();
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+          age = age - 1;
+        }
+        return age;
+      };
+
+      const getUpcomingBirthdays = () => {
+        const today = new Date();
+        const threeMonthsLater = new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000);
+        return students.filter(student => {
+          if (!student.birthdate) return false;
+          const birth = new Date(student.birthdate);
+          const nextBirthday = new Date(today.getFullYear(), birth.getMonth(), birth.getDate());
+          if (nextBirthday < today) {
+            nextBirthday.setFullYear(today.getFullYear() + 1);
+          }
+          return nextBirthday <= threeMonthsLater;
+        }).sort((a, b) => {
+          const birthA = new Date(a.birthdate);
+          const birthB = new Date(b.birthdate);
+          const nextA = new Date(today.getFullYear(), birthA.getMonth(), birthA.getDate());
+          const nextB = new Date(today.getFullYear(), birthB.getMonth(), birthB.getDate());
+          if (nextA < today) nextA.setFullYear(today.getFullYear() + 1);
+          if (nextB < today) nextB.setFullYear(today.getFullYear() + 1);
+          return nextA - nextB;
+        });
+      };
+
+      const generateQRCodeURL = (data) => {
+        return 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(data);
+      };
+
+      const downloadQRCode = (data, filename) => {
+        const link = document.createElement('a');
+        link.href = generateQRCodeURL(data);
+        link.download = filename + '.png';
+        link.click();
+      };
+      const handleQRScan = (qrData) => {
+        try {
+          const data = JSON.parse(qrData);
+          if (data.type === 'student') {
+            handleStudentScan(data);
+          } else if (data.type === 'employee') {
+            handleEmployeeScan(data);
+          } else if (data.type === 'demo') {
+            setView('demo-entry');
+          } else if (data.type === 'admin') {
+            setView('admin');
+          }
+          setQrInput('');
+        } catch (error) {
+          alert('Invalid QR code');
+        }
+      };
+
+      const handleStudentScan = (data) => {
+        const student = students.find(s => s.id === data.id);
+        if (!student) {
+          alert('Student not found');
+          return;
+        }
+        if (student.locked) {
+          alert('Please see manager for assistance');
+          if (student.message) {
+            alert('Message: ' + student.message);
+          }
+          return;
+        }
+        if (student.message) {
+          alert(student.message);
+        }
+        if (student.flagged) {
+          alert('ADMIN ALERT: Flagged student ' + student.firstName + ' ' + student.lastName + ' has checked in');
+        }
+        const today = formatDate();
+        const existingCheckIn = checkIns.find(
+          c => c.studentId === student.id && c.date === today && !c.timeOut
+        );
+        if (existingCheckIn) {
+          setCurrentStudent({ ...student, action: 'checkout', checkInId: existingCheckIn.id });
+        } else {
+          const lastVerification = student.lastContactVerification;
+          const currentYear = new Date().getFullYear();
+          const julyFirst = new Date(currentYear, 6, 1);
+          const lastVerificationDate = lastVerification ? new Date(lastVerification) : null;
+          if (!lastVerificationDate || lastVerificationDate < julyFirst) {
+            setCurrentStudent({ ...student, action: 'verify-contact' });
+          } else {
+            setCurrentStudent({ ...student, action: 'checkin' });
+          }
+        }
+      };
+
+      const handleEmployeeScan = (data) => {
+        const employee = employees.find(e => e.id === data.id);
+        if (!employee) {
+          alert('Employee not found');
+          return;
+        }
+        const today = formatDate();
+        const existingCheckIn = checkIns.find(
+          c => c.employeeId === employee.id && c.date === today && !c.timeOut
+        );
+        const now = new Date();
+        const sheetName = 'BnB_USA_Employees_' + getMonthYear();
+        if (existingCheckIn) {
+          const timeOut = formatTime(now);
+          const updatedCheckIn = { ...existingCheckIn, timeOut: timeOut };
+          setCheckIns(checkIns.map(c => c.id === existingCheckIn.id ? updatedCheckIn : c));
+          writeToSheet(sheetName, [today, existingCheckIn.timeIn, timeOut, employee.name]);
+          alert(employee.name + ' checked out at ' + timeOut);
+        } else {
+          const timeIn = formatTime(now);
+          const newCheckIn = {
+            id: Date.now(),
+            employeeId: employee.id,
+            date: today,
+            timeIn: timeIn,
+            timeOut: null
+          };
+          setCheckIns([...checkIns, newCheckIn]);
+          alert(employee.name + ' checked in at ' + timeIn);
+        }
+      };
+
+      const startDrawing = (e) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX || (e.touches && e.touches[0] && e.touches[0].clientX)) - rect.left;
+        const y = (e.clientY || (e.touches && e.touches[0] && e.touches[0].clientY)) - rect.top;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        setIsDrawing(true);
+      };
+
+      const draw = (e) => {
+        if (!isDrawing) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX || (e.touches && e.touches[0] && e.touches[0].clientX)) - rect.left;
+        const y = (e.clientY || (e.touches && e.touches[0] && e.touches[0].clientY)) - rect.top;
+        ctx.lineTo(x, y);
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      };
+
+      const stopDrawing = () => {
+        setIsDrawing(false);
+      };
+
+      const clearSignature = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      };
+
+      const getSignatureData = () => {
+        return canvasRef.current ? canvasRef.current.toDataURL() : '';
+      };
+
+      const completeCheckIn = (firstName, signature) => {
+        if (!currentStudent) return;
+        const now = new Date();
+        const today = formatDate(now);
+        const time = formatTime(now);
+        const sheetName = 'BnB_USA_Students_' + getMonthYear();
+        if (currentStudent.action === 'checkout') {
+          const checkIn = checkIns.find(c => c.id === currentStudent.checkInId);
+          const updatedCheckIn = { ...checkIn, timeOut: time, signatureOut: signature };
+          setCheckIns(checkIns.map(c => c.id === checkIn.id ? updatedCheckIn : c));
+          writeToSheet(sheetName, [
+            today, checkIn.timeIn, time,
+            currentStudent.firstName + ' ' + currentStudent.lastName,
+            currentStudent.parentFirstName + ' ' + currentStudent.parentLastName,
+            currentStudent.parentPhone, currentStudent.parentEmail, firstName, firstName
+          ]);
+          alert(currentStudent.firstName + ' checked out at ' + time);
+        } else {
+          const newCheckIn = {
+            id: Date.now(),
+            studentId: currentStudent.id,
+            date: today,
+            timeIn: time,
+            timeOut: null,
+            signatureIn: signature
+          };
+          setCheckIns([...checkIns, newCheckIn]);
+          alert(currentStudent.firstName + ' checked in at ' + time);
+        }
+        setCurrentStudent(null);
+        setFirstName('');
+        setView('scan');
+      };
+
+      const verifyContactInfo = async (isCorrect) => {
+        if (isCorrect) {
+          const updatedStudent = { ...currentStudent, lastContactVerification: new Date().toISOString() };
+          const updatedStudents = students.map(s => s.id === currentStudent.id ? updatedStudent : s);
+          setStudents(updatedStudents);
+          await updateStudentInSheet(updatedStudent);
+          setCurrentStudent({ ...updatedStudent, action: 'checkin' });
+        } else {
+          alert('Please see the front desk to update your contact information');
+          setCurrentStudent(null);
+          setView('scan');
+        }
+      };
+
+      const updateStudentInSheet = async (student) => {
+        try {
+          const response = await window.gapi.client.sheets.spreadsheets.values.get({
+            spreadsheetId: CONFIG.SPREADSHEET_ID,
+            range: 'Students!A:A'
+          });
+          const rows = response.result.values || [];
+          const rowIndex = rows.findIndex(row => row[0] === student.id);
+          if (rowIndex > 0) {
+            await window.gapi.client.sheets.spreadsheets.values.update({
+              spreadsheetId: CONFIG.SPREADSHEET_ID,
+              range: 'Students!A' + (rowIndex + 1) + ':R' + (rowIndex + 1),
+              valueInputOption: 'RAW',
+              resource: {
+                values: [[
+                  student.id, student.firstName, student.lastName, student.birthdate,
+                  student.age, student.parentFirstName, student.parentLastName,
+                  student.parentPhone, student.parentEmail, student.qrCode,
+                  student.flagged ? 'TRUE' : 'FALSE', student.locked ? 'TRUE' : 'FALSE',
+                  student.message || '', student.lastContactVerification || '',
+                  student.emergencyContactName || '', student.emergencyContactPhone || '',
+                  student.emergencyContactRelation || '', student.medicalNotes || ''
+                ]]
+              }
+            });
+          }
+        } catch (error) {
+          console.error('Error updating student:', error);
+        }
+      };
+
+      const generateStudent = async () => {
+        if (!newStudent.firstName || !newStudent.lastName || !newStudent.birthdate) {
+          alert('Please fill in First Name, Last Name, and Birthdate');
+          return;
+        }
+        const qrData = JSON.stringify({
+          type: 'student',
+          id: Date.now().toString()
+        });
+        const student = {
+          id: Date.now().toString(),
+          ...newStudent,
+          qrCode: qrData,
+          age: calculateAge(newStudent.birthdate),
+          flagged: false,
+          locked: false,
+          message: null,
+          lastContactVerification: null
+        };
+        setStudents([...students, student]);
+        await ensureSheetExists('Students');
+        await writeToSheet('Students', [
+          student.id, student.firstName, student.lastName, student.birthdate,
+          student.age, student.parentFirstName, student.parentLastName,
+          student.parentPhone, student.parentEmail, student.qrCode,
+          'FALSE', 'FALSE', '', '',
+          student.emergencyContactName, student.emergencyContactPhone,
+          student.emergencyContactRelation, student.medicalNotes
+        ]);
+        setNewStudent({
+          firstName: '', lastName: '', birthdate: '', parentFirstName: '', parentLastName: '',
+          parentPhone: '', parentEmail: '', emergencyContactName: '', emergencyContactPhone: '',
+          emergencyContactRelation: '', medicalNotes: ''
+        });
+        alert('Student created successfully!');
+      };
+
+      const generateEmployee = async () => {
+        if (!newEmployee.name) {
+          alert('Please enter employee name');
+          return;
+        }
+        const qrData = JSON.stringify({
+          type: 'employee',
+          id: Date.now().toString()
+        });
+        const employee = {
+          id: Date.now().toString(),
+          ...newEmployee,
+          qrCode: qrData
+        };
+        setEmployees([...employees, employee]);
+        await ensureSheetExists('Employees');
+        await writeToSheet('Employees', [employee.id, employee.name, employee.email, employee.qrCode]);
+        setNewEmployee({ name: '', email: '' });
+        alert('Employee created successfully!');
+      };
+
+      const toggleStudentFlag = async (studentId) => {
+        const updatedStudents = students.map(s =>
+          s.id === studentId ? { ...s, flagged: !s.flagged } : s
+        );
+        setStudents(updatedStudents);
+        const student = updatedStudents.find(s => s.id === studentId);
+        await updateStudentInSheet(student);
+      };
+
+      const toggleStudentLock = async (studentId) => {
+        const updatedStudents = students.map(s =>
+          s.id === studentId ? { ...s, locked: !s.locked } : s
+        );
+        setStudents(updatedStudents);
+        const student = updatedStudents.find(s => s.id === studentId);
+        await updateStudentInSheet(student);
+      };
+
+      const setStudentMessage = async (studentId, message) => {
+        const updatedStudents = students.map(s =>
+          s.id === studentId ? { ...s, message: message } : s
+        );
+        setStudents(updatedStudents);
+        const student = updatedStudents.find(s => s.id === studentId);
+        await updateStudentInSheet(student);
+      };
+
+      const printIDCard = (student) => {
+        const w = window.open('', '', 'width=600,height=400');
+        w.document.write('<html><head><title>ID Card</title><style>body{font-family:Arial;display:flex;justify-content:center;align-items:center;height:100vh;margin:0}.card{border:2px solid #333;border-radius:10px;padding:20px;width:300px;text-align:center}.logo{width:100px;height:100px;background:#4F46E5;margin:0 auto 10px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-size:14px;font-weight:bold}.name{font-size:20px;font-weight:bold;margin:10px 0}</style></head><body><div class="card"><div class="logo">BnB<br/>STEM</div><div class="name">' + student.firstName + ' ' + student.lastName + '</div><img src="' + generateQRCodeURL(student.qrCode) + '"/></div></body></html>');
+        w.document.close();
+        w.print();
+      };
+      if (!isSignedIn) {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-8 flex items-center justify-center">
+            <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+              <div className="w-20 h-20 bg-indigo-600 rounded-full mx-auto mb-4 flex items-center justify-center">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                  <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                  <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+                </svg>
+              </div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">BnB STEM</h1>
+              <p className="text-gray-600 mb-8">Check-In System</p>
+              {!isGoogleReady ? (
+                <p className="text-gray-500">Loading Google Services...</p>
+              ) : (
+                <div>
+                  <p className="text-gray-700 mb-6">Please sign in with your Google account to continue</p>
+                  <button onClick={handleSignIn} className="w-full px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-medium">
+                    Sign in with Google
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      if (view === 'scan') {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-8">
+            <div className="max-w-md mx-auto">
+              <div className="bg-white rounded-2xl shadow-xl p-8">
+                <div className="text-center mb-8">
+                  <div className="w-20 h-20 bg-indigo-600 rounded-full mx-auto mb-4 flex items-center justify-center">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                      <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+                    </svg>
+                  </div>
+                  <h1 className="text-3xl font-bold text-gray-900 mb-2">BnB STEM</h1>
+                  <p className="text-gray-600">Check-In System</p>
+                </div>
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Scan QR Code</label>
+                  <input ref={qrInputRef} type="text" value={qrInput} onChange={(e) => setQrInput(e.target.value)}
+                    onKeyPress={(e) => { if (e.key === 'Enter' && qrInput) { handleQRScan(qrInput); }}}
+                    placeholder="Scan or enter QR code" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" autoFocus />
+                </div>
+                {!isOnline && (
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6 flex items-center">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-yellow-600 mr-2">
+                      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    <span className="text-sm text-yellow-800">Offline - data will sync when reconnected</span>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <button onClick={() => setView('staff-dashboard')} className="flex items-center justify-center px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-2">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                    </svg>
+                    Staff
+                  </button>
+                  <button onClick={() => setView('admin')} className="flex items-center justify-center px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-2">
+                      <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    Admin
+                  </button>
+                </div>
+                <div className="mt-4 text-center">
+                  <button onClick={handleSignOut} className="text-sm text-gray-500 hover:text-gray-700">Sign Out</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (currentStudent && currentStudent.action === 'verify-contact') {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-8 flex items-center justify-center">
+            <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">Verify Contact Information</h2>
+              <div className="space-y-4 mb-8">
+                <div><label className="block text-sm font-medium text-gray-700">Parent Phone</label>
+                  <p className="text-lg text-gray-900">{currentStudent.parentPhone}</p></div>
+                <div><label className="block text-sm font-medium text-gray-700">Parent Email</label>
+                  <p className="text-lg text-gray-900">{currentStudent.parentEmail}</p></div>
+              </div>
+              <p className="text-gray-600 mb-6">Is this information correct?</p>
+              <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => verifyContactInfo(false)} className="px-6 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">No, Update Needed</button>
+                <button onClick={() => verifyContactInfo(true)} className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Yes, Correct</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (currentStudent && (currentStudent.action === 'checkin' || currentStudent.action === 'checkout')) {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-8 flex items-center justify-center">
+            <div className="bg-white rounded-2xl shadow-xl p-8 max-w-2xl w-full">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">
+                {currentStudent.action === 'checkout' ? 'Check Out' : 'Check In'}: {currentStudent.firstName} {currentStudent.lastName}
+              </h2>
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Parent First Name</label>
+                <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg" placeholder="Enter first name" />
+              </div>
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Parent Signature</label>
+                <canvas ref={canvasRef} width={600} height={200} onMouseDown={startDrawing} onMouseMove={draw}
+                  onMouseUp={stopDrawing} onMouseLeave={stopDrawing} onTouchStart={startDrawing} onTouchMove={draw}
+                  onTouchEnd={stopDrawing} className="border-2 border-gray-300 rounded-lg w-full cursor-crosshair"
+                  style={{ touchAction: 'none' }} />
+              </div>
+              <div className="flex gap-4">
+                <button onClick={clearSignature} className="flex-1 px-6 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Clear</button>
+                <button onClick={() => { setCurrentStudent(null); setView('scan'); }} className="flex-1 px-6 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Cancel</button>
+                <button onClick={() => { if (!firstName.trim()) { alert('Please enter parent first name'); return; } completeCheckIn(firstName, getSignatureData()); }}
+                  className="flex-1 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Submit</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (view === 'demo-entry') {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-8 flex items-center justify-center">
+            <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+              <h2 className="text-2xl font-bold text-gray-900 mb-6">Demo/Walk-In Entry</h2>
+              <div className="space-y-4 mb-6">
+                <div><label className="block text-sm font-medium text-gray-700 mb-2">Student Name</label>
+                  <input type="text" value={demoData.studentName} onChange={(e) => setDemoData({ ...demoData, studentName: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg" /></div>
+                <div><label className="block text-sm font-medium text-gray-700 mb-2">Parent Name</label>
+                  <input type="text" value={demoData.parentName} onChange={(e) => setDemoData({ ...demoData, parentName: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg" /></div>
+                <div><label className="block text-sm font-medium text-gray-700 mb-2">Employee Name</label>
+                  <input type="text" value={demoData.employeeName} onChange={(e) => setDemoData({ ...demoData, employeeName: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg" /></div>
+              </div>
+              <div className="flex gap-4">
+                <button onClick={() => setView('scan')} className="flex-1 px-6 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Cancel</button>
+                <button onClick={() => { 
+                  const now = new Date();
+                  writeToSheet('BnB_USA_Demos_' + getMonthYear(), [formatDate(now), formatTime(now), demoData.studentName, demoData.parentName, demoData.employeeName]);
+                  setView('scan'); 
+                  setDemoData({ studentName: '', parentName: '', employeeName: '' });
+                  alert('Demo entry recorded'); 
+                }} className="flex-1 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Submit</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (view === 'admin') {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-8">
+            <div className="max-w-6xl mx-auto">
+              <div className="bg-white rounded-2xl shadow-xl p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-3xl font-bold text-gray-900">Admin Panel</h2>
+                  <div className="flex gap-2">
+                    <button onClick={() => setView('qr-management')} className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200">QR Management</button>
+                    <button onClick={() => setView('birthdays')} className="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200">Birthdays</button>
+                    <button onClick={() => setView('scan')} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Back</button>
+                  </div>
+                </div>
+                <div className="flex gap-2 mb-6 border-b">
+                  <button onClick={() => setAdminTab('students')} className={'px-4 py-2 font-medium ' + (adminTab === 'students' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-600')}>Students</button>
+                  <button onClick={() => setAdminTab('employees')} className={'px-4 py-2 font-medium ' + (adminTab === 'employees' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-600')}>Employees</button>
+                  <button onClick={() => setAdminTab('demo')} className={'px-4 py-2 font-medium ' + (adminTab === 'demo' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-600')}>Demo QR</button>
+                  <button onClick={() => setAdminTab('manage')} className={'px-4 py-2 font-medium ' + (adminTab === 'manage' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-600')}>Manage Students</button>
+                </div>
+                {adminTab === 'students' && (
+                  <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <h3 className="text-xl font-semibold mb-4">Add New Student</h3>
+                      <div className="space-y-3">
+                        <input type="text" placeholder="First Name *" value={newStudent.firstName} onChange={(e) => setNewStudent({...newStudent, firstName: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="text" placeholder="Last Name *" value={newStudent.lastName} onChange={(e) => setNewStudent({...newStudent, lastName: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="date" value={newStudent.birthdate} onChange={(e) => setNewStudent({...newStudent, birthdate: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="text" placeholder="Parent First Name" value={newStudent.parentFirstName} onChange={(e) => setNewStudent({...newStudent, parentFirstName: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="text" placeholder="Parent Last Name" value={newStudent.parentLastName} onChange={(e) => setNewStudent({...newStudent, parentLastName: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="tel" placeholder="Parent Phone" value={newStudent.parentPhone} onChange={(e) => setNewStudent({...newStudent, parentPhone: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="email" placeholder="Parent Email" value={newStudent.parentEmail} onChange={(e) => setNewStudent({...newStudent, parentEmail: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="text" placeholder="Emergency Contact Name" value={newStudent.emergencyContactName} onChange={(e) => setNewStudent({...newStudent, emergencyContactName: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="tel" placeholder="Emergency Phone" value={newStudent.emergencyContactPhone} onChange={(e) => setNewStudent({...newStudent, emergencyContactPhone: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="text" placeholder="Emergency Relation" value={newStudent.emergencyContactRelation} onChange={(e) => setNewStudent({...newStudent, emergencyContactRelation: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <textarea placeholder="Medical Notes" value={newStudent.medicalNotes} onChange={(e) => setNewStudent({...newStudent, medicalNotes: e.target.value})} className="w-full px-4 py-2 border rounded-lg" rows="2" />
+                        <button onClick={generateStudent} className="w-full px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Generate Student & QR</button>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-semibold mb-4">Student List ({students.length})</h3>
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {students.map(student => (
+                          <div key={student.id} className="p-3 bg-gray-50 rounded-lg">
+                            <p className="font-medium">{student.firstName} {student.lastName}</p>
+                            <p className="text-sm text-gray-600">Age: {student.age}</p>
+                            <div className="mt-2 flex gap-2">
+                              <button onClick={() => printIDCard(student)} className="text-xs px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700">Print ID</button>
+                              <button onClick={() => downloadQRCode(student.qrCode, 'student-' + student.firstName)} className="text-xs px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Download QR</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {adminTab === 'employees' && (
+                  <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <h3 className="text-xl font-semibold mb-4">Add New Employee</h3>
+                      <div className="space-y-3">
+                        <input type="text" placeholder="Employee Name *" value={newEmployee.name} onChange={(e) => setNewEmployee({...newEmployee, name: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <input type="email" placeholder="Employee Email" value={newEmployee.email} onChange={(e) => setNewEmployee({...newEmployee, email: e.target.value})} className="w-full px-4 py-2 border rounded-lg" />
+                        <button onClick={generateEmployee} className="w-full px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Generate Employee & QR</button>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-semibold mb-4">Employee List ({employees.length})</h3>
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {employees.map(employee => (
+                          <div key={employee.id} className="p-3 bg-gray-50 rounded-lg">
+                            <p className="font-medium">{employee.name}</p>
+                            {employee.email && <p className="text-sm text-gray-600">{employee.email}</p>}
+                            <div className="mt-2 flex gap-2">
+                              <button onClick={() => downloadQRCode(employee.qrCode, 'employee-' + employee.name)} className="text-xs px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Download QR</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {adminTab === 'demo' && (
+                  <div className="max-w-2xl mx-auto">
+                    <div className="bg-gray-50 rounded-lg p-8 text-center">
+                      <h3 className="text-xl font-semibold mb-4">Demo/Walk-In QR Code</h3>
+                      <p className="text-gray-600 mb-6">Generate a QR code for demos and walk-ins</p>
+                      {!demoQRCode ? (
+                        <button onClick={() => setDemoQRCode(JSON.stringify({ type: 'demo', id: 'demo-scan' }))} className="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Generate Demo QR</button>
+                      ) : (
+                        <div>
+                          <div className="bg-white p-6 rounded-lg inline-block mb-6">
+                            <img src={generateQRCodeURL(demoQRCode)} alt="Demo QR" className="mx-auto" />
+                          </div>
+                          <div className="flex gap-4 justify-center">
+                            <button onClick={() => downloadQRCode(demoQRCode, 'demo-qr')} className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700">Download QR</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {adminTab === 'manage' && (
+                  <div className="space-y-4">
+                    <h3 className="text-xl font-semibold mb-4">Manage Students</h3>
+                    {students.map(student => (
+                      <div key={student.id} className="p-4 bg-gray-50 rounded-lg">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-medium text-lg">{student.firstName} {student.lastName}</p>
+                            <p className="text-sm text-gray-600">Age: {student.age} | Parent: {student.parentFirstName} {student.parentLastName}</p>
+                            {student.flagged && <span className="inline-block mt-1 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded">FLAGGED</span>}
+                            {student.locked && <span className="inline-block mt-1 ml-2 px-2 py-1 bg-red-100 text-red-800 text-xs rounded">LOCKED</span>}
+                            {student.message && <p className="text-sm text-blue-600 mt-1">Message: {student.message}</p>}
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => toggleStudentFlag(student.id)} className={'text-xs px-3 py-1 rounded ' + (student.flagged ? 'bg-yellow-600 text-white hover:bg-yellow-700' : 'bg-gray-200 text-gray-800 hover:bg-gray-300')}>
+                              {student.flagged ? 'Unflag' : 'Flag'}
+                            </button>
+                            <button onClick={() => toggleStudentLock(student.id)} className={'text-xs px-3 py-1 rounded ' + (student.locked ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-gray-200 text-gray-800 hover:bg-gray-300')}>
+                              {student.locked ? 'Unlock' : 'Lock'}
+                            </button>
+                            <button onClick={() => {
+                              const msg = prompt('Enter message for ' + student.firstName + ' (leave blank to clear):');
+                              if (msg !== null) setStudentMessage(student.id, msg || null);
+                            }} className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Message</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (view === 'birthdays') {
+        const upcomingBirthdays = getUpcomingBirthdays();
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-8">
+            <div className="max-w-4xl mx-auto">
+              <div className="bg-white rounded-2xl shadow-xl p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-3xl font-bold text-gray-900">Upcoming Birthdays</h2>
+                  <button onClick={() => setView('admin')} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Back</button>
+                </div>
+                <p className="text-gray-600 mb-6">Students with birthdays in the next 3 months</p>
+                <div className="space-y-3">
+                  {upcomingBirthdays.map(student => {
+                    const birth = new Date(student.birthdate);
+                    const nextBirthday = new Date(new Date().getFullYear(), birth.getMonth(), birth.getDate());
+                    if (nextBirthday < new Date()) nextBirthday.setFullYear(new Date().getFullYear() + 1);
+                    return (
+                      <div key={student.id} className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                        <p className="font-medium">{student.firstName} {student.lastName}</p>
+                        <p className="text-sm text-gray-600">Birthday: {birth.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
+                        <p className="text-sm text-purple-600">Turning {calculateAge(student.birthdate) + 1} years old</p>
+                      </div>
+                    );
+                  })}
+                  {upcomingBirthdays.length === 0 && <p className="text-gray-500 text-center py-8">No upcoming birthdays in the next 3 months</p>}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (view === 'qr-management') {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-8">
+            <div className="max-w-6xl mx-auto">
+              <div className="bg-white rounded-2xl shadow-xl p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-3xl font-bold text-gray-900">QR Code Management</h2>
+                  <button onClick={() => setView('admin')} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Back</button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="border-2 border-indigo-200 rounded-lg p-6">
+                    <h3 className="text-lg font-semibold mb-4 text-indigo-900">Student QR Codes</h3>
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {students.map(student => (
+                        <div key={student.id} className="bg-gray-50 p-3 rounded">
+                          <p className="font-medium text-sm mb-2">{student.firstName} {student.lastName}</p>
+                          <img src={generateQRCodeURL(student.qrCode)} alt="QR" className="w-32 h-32 mx-auto mb-2" />
+                          <div className="flex gap-2">
+                            <button onClick={() => printIDCard(student)} className="flex-1 text-xs px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700">Print</button>
+                            <button onClick={() => downloadQRCode(student.qrCode, 'student-' + student.firstName)} className="flex-1 text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700">Save</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="border-2 border-blue-200 rounded-lg p-6">
+                    <h3 className="text-lg font-semibold mb-4 text-blue-900">Employee QR Codes</h3>
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {employees.map(employee => (
+                        <div key={employee.id} className="bg-gray-50 p-3 rounded">
+                          <p className="font-medium text-smmb-2">{employee.name}</p>
+                          <img src={generateQRCodeURL(employee.qrCode)} alt="QR" className="w-32 h-32 mx-auto mb-2" />
+                          <div className="flex gap-2">
+                            <button onClick={() => downloadQRCode(employee.qrCode, 'employee-' + employee.name)} className="flex-1 text-xs px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700">Save</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="border-2 border-purple-200 rounded-lg p-6">
+                    <h3 className="text-lg font-semibold mb-4 text-purple-900">Demo QR Code</h3>
+                    <div className="bg-gray-50 p-4 rounded text-center">
+                      {!demoQRCode ? (
+                        <div>
+                          <p className="text-sm text-gray-600 mb-4">No demo QR generated</p>
+                          <button onClick={() => setDemoQRCode(JSON.stringify({ type: 'demo', id: 'demo-scan' }))} className="px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm">Generate Demo QR</button>
+                        </div>
+                      ) : (
+                        <div>
+                          <p className="text-sm font-medium mb-3">Demo/Walk-In QR</p>
+                          <img src={generateQRCodeURL(demoQRCode)} alt="Demo QR" className="w-40 h-40 mx-auto mb-3" />
+                          <button onClick={() => downloadQRCode(demoQRCode, 'demo-qr-code')} className="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-xs">Download</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (view === 'staff-dashboard') {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 p-8">
+            <div className="max-w-6xl mx-auto">
+              <div className="bg-white rounded-2xl shadow-xl p-8">
+                <div className="flex justify-between items-center mb-8">
+                  <h2 className="text-3xl font-bold text-gray-900">Staff Dashboard</h2>
+                  <button onClick={() => setView('scan')} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300">Back</button>
+                </div>
+                <div className="mb-8">
+                  <h3 className="text-xl font-semibold mb-4">Currently Checked In</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {checkIns.filter(c => !c.timeOut && c.date === formatDate()).map(checkIn => {
+                      const student = students.find(s => s.id === checkIn.studentId);
+                      const employee = employees.find(e => e.id === checkIn.employeeId);
+                      const person = student || employee;
+                      return (
+                        <div key={checkIn.id} className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                          <p className="font-medium">{student ? person.firstName + ' ' + person.lastName : (person && person.name)}</p>
+                          <p className="text-sm text-gray-600">Checked in: {checkIn.timeIn}</p>
+                          <span className="inline-block mt-2 px-2 py-1 bg-green-100 text-green-800 text-xs rounded">Active</span>
+                        </div>
+                      );
+                    })}
+                    {checkIns.filter(c => !c.timeOut && c.date === formatDate()).length === 0 && (
+                      <p className="text-gray-500 col-span-2">No one currently checked in</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return null;
+    }
+
+    ReactDOM.render(<BnBCheckInSystem />, document.getElementById('root'));
+  </script>
+</body>
+</html>
