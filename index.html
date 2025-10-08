@@ -57,6 +57,7 @@
               discoveryDocs: ["https://sheets.googleapis.com/$discovery/rest?version=v4"],
               scope: CONFIG.SCOPES
             }).then(() => {
+              console.log('SUCCESS: Google API initialized');
               setIsGoogleReady(true);
               const authInstance = window.gapi.auth2.getAuthInstance();
               setIsSignedIn(authInstance.isSignedIn.get());
@@ -65,8 +66,9 @@
                 loadDataFromSheets();
               }
             }).catch((error) => {
-              console.error('Error:', error);
-              alert('Google API Error: ' + error.message);
+              console.error('FULL ERROR:', error);
+              console.error('ERROR DETAILS:', JSON.stringify(error, null, 2));
+              alert('Google API failed. Check console for details. Error: ' + (error.details || error.error || 'Unknown'));
             });
           });
         };
