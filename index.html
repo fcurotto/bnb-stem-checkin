@@ -70,6 +70,7 @@
      alert('Error initializing Google API: ' + JSON.stringify(error));
      setIsGoogleReady(true);
    });
+          });
               setIsGoogleReady(true);
               const authInstance = window.gapi.auth2.getAuthInstance();
               setIsSignedIn(authInstance.isSignedIn.get());
