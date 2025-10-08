@@ -52,11 +52,24 @@
         const initClient = () => {
           window.gapi.load('client:auth2', () => {
             window.gapi.client.init({
-              apiKey: CONFIG.API_KEY,
-              clientId: CONFIG.CLIENT_ID,
-              discoveryDocs: ["https://sheets.googleapis.com/$discovery/rest?version=v4"],
-              scope: CONFIG.SCOPES
-            }).then(() => {
+     apiKey: CONFIG.API_KEY,
+     clientId: CONFIG.CLIENT_ID,
+     discoveryDocs: ["https://sheets.googleapis.com/$discovery/rest?version=v4"],
+     scope: CONFIG.SCOPES
+   }).then(() => {
+     console.log('Google API initialized successfully');
+     setIsGoogleReady(true);
+     const authInstance = window.gapi.auth2.getAuthInstance();
+     setIsSignedIn(authInstance.isSignedIn.get());
+     authInstance.isSignedIn.listen(setIsSignedIn);
+     if (authInstance.isSignedIn.get()) {
+       loadDataFromSheets();
+     }
+   }).catch((error) => {
+     console.error('Google API initialization error:', error);
+     alert('Error initializing Google API: ' + JSON.stringify(error));
+     setIsGoogleReady(true);
+   });
               setIsGoogleReady(true);
               const authInstance = window.gapi.auth2.getAuthInstance();
               setIsSignedIn(authInstance.isSignedIn.get());
