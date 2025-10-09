@@ -145,49 +145,49 @@ const handleSignOut = () => {
 };
 
       const loadDataFromSheets = async () => {
-        try {
-          const response = await window.gapi.client.sheets.spreadsheets.values.batchGet({
-            spreadsheetId: CONFIG.SPREADSHEET_ID,
-            ranges: ['Students!A:Z', 'Employees!A:Z']
-          });
-          const studentData = response.result.valueRanges[0].values || [];
-          const employeeData = response.result.valueRanges[1].values || [];
-          if (studentData.length > 1) {
-            const loadedStudents = studentData.slice(1).map((row, idx) => ({
-              id: row[0] || 'student-' + idx,
-              firstName: row[1] || '',
-              lastName: row[2] || '',
-              birthdate: row[3] || '',
-              age: row[4] || '',
-              parentFirstName: row[5] || '',
-              parentLastName: row[6] || '',
-              parentPhone: row[7] || '',
-              parentEmail: row[8] || '',
-              qrCode: row[9] || '',
-              flagged: row[10] === 'TRUE',
-              locked: row[11] === 'TRUE',
-              message: row[12] || null,
-              lastContactVerification: row[13] || null,
-              emergencyContactName: row[14] || '',
-              emergencyContactPhone: row[15] || '',
-              emergencyContactRelation: row[16] || '',
-              medicalNotes: row[17] || ''
-            }));
-            setStudents(loadedStudents);
-          }
-          if (employeeData.length > 1) {
-            const loadedEmployees = employeeData.slice(1).map((row, idx) => ({
-              id: row[0] || 'employee-' + idx,
-              name: row[1] || '',
-              email: row[2] || '',
-              qrCode: row[3] || ''
-            }));
-            setEmployees(loadedEmployees);
-          }
-        } catch (error) {
-          console.error('Error loading data:', error);
-        }
-      };
+  try {
+    const response = await window.gapi.client.sheets.spreadsheets.values.batchGet({
+      spreadsheetId: CONFIG.SPREADSHEET_ID,
+      ranges: ['Students!A:Z', 'Employees!A:Z']
+    });
+    const studentData = response.result.valueRanges[0].values || [];
+    const employeeData = response.result.valueRanges[1].values || [];
+    if (studentData.length > 1) {
+      const loadedStudents = studentData.slice(1).map((row, idx) => ({
+        id: row[0] || 'student-' + idx,
+        firstName: row[1] || '',
+        lastName: row[2] || '',
+        birthdate: row[3] || '',
+        age: row[4] || '',
+        parentFirstName: row[5] || '',
+        parentLastName: row[6] || '',
+        parentPhone: row[7] || '',
+        parentEmail: row[8] || '',
+        qrCode: row[9] || '',
+        flagged: row[10] === 'TRUE',
+        locked: row[11] === 'TRUE',
+        message: row[12] || null,
+        lastContactVerification: row[13] || null,
+        emergencyContactName: row[14] || '',
+        emergencyContactPhone: row[15] || '',
+        emergencyContactRelation: row[16] || '',
+        medicalNotes: row[17] || ''
+      }));
+      setStudents(loadedStudents);
+    }
+    if (employeeData.length > 1) {
+      const loadedEmployees = employeeData.slice(1).map((row, idx) => ({
+        id: row[0] || 'employee-' + idx,
+        name: row[1] || '',
+        email: row[2] || '',
+        qrCode: row[3] || ''
+      }));
+      setEmployees(loadedEmployees);
+    }
+  } catch (error) {
+    console.log('Sheets not found yet - will be created on first use');
+  }
+};
 
       const writeToSheet = async (sheetName, data) => {
         if (!isSignedIn) return;
