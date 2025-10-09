@@ -109,16 +109,24 @@
 
       const handleCredentialResponse = async (response) => {
   try {
-    const token = response.credential;
-    const decodedToken = JSON.parse(atob(token.split('.')[1]));
+    const idToken = response.credential;
+    const decodedToken = JSON.parse(atob(idToken.split('.')[1]));
     const email = decodedToken.email;
     
     setUserEmail(email);
     setIsAdmin(CONFIG.ADMIN_EMAILS.includes(email));
-    
-    window.gapi.client.setToken({ access_token: token });
     setIsSignedIn(true);
-    await loadDataFromSheets();
+    
+    const tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: CONFIG.CLIENT_ID,
+      scope: CONFIG.SCOPES,
+      callback: async (tokenResponse) => {
+        window.gapi.client.setToken({ access_token: tokenResponse.access_token });
+        await loadDataFromSheets();
+      },
+    });
+    
+    tokenClient.requestAccessToken();
   } catch (error) {
     console.error('Sign-in error:', error);
   }
